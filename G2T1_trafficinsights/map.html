@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Montgomery Crash Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    html, body, #map { margin: 0; padding: 0; height: 100%; }
+    canvas { pointer-events: none; }
+    #hourLabel {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    color: white;
+    font-size: 40px;
+    background: rgba(0,0,0,0.6);
+    padding: 5px 15px;
+    border-radius: 12px;
+    font-family: sans-serif;
+    z-index: 1000;
+  }
+  #restartBtn {
+  position: absolute;
+  top: 90px;
+  right: 20px;
+  padding: 10px 14px;
+  font-size: 20px;
+  font-family: sans-serif;
+  background-color: #04246b;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  z-index: 1000;
+}
+
+  
+
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="hourLabel">Loading...</div>
+  <button id="restartBtn">Restart Animation</button>
+
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    // 1. Set up Leaflet map
+    const map = L.map('map').setView([39.13, -77.10], 10.5);
+
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    
+
+    // 2. Prepare canvas
+    const canvas = document.createElement('canvas');
+    canvas.style.position = 'absolute';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.style.zIndex = '400';
+    map.getPanes().overlayPane.appendChild(canvas);
+    const ctx = canvas.getContext('2d');
+
+    function resizeCanvas() {
+      const size = map.getSize();
+      canvas.width = size.x;
+      canvas.height = size.y;
+    }
+    map.on('resize move zoom', () => {
+      resizeCanvas();
+      draw(); // re-draw after movement
+    });
+    resizeCanvas();
+
+    // 3. Crash data and animation state
+    const accidentData = [];
+    let hour = 0;
+    let frame = 0;
+    const pulseFrames = 60;
+
+    // 4. Load CSV
+    fetch('./files/accidents.csv')
+      .then(resp => resp.text())
+      .then(csv => {
+        const lines = csv.trim().split('\n');
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+        const latIndex = headers.indexOf('latitude');
+        const lonIndex = headers.indexOf('longitude');
+        const timeIndex = headers.indexOf('crash_date_time');
+
+        lines.slice(1).forEach(row => {
+          const cols = row.split(',');
+          const lat = parseFloat(cols[latIndex]);
+          const lon = parseFloat(cols[lonIndex]);
+          const timeStr = cols[timeIndex];
+          const date = new Date(timeStr);
+
+          if (!isNaN(lat) && !isNaN(lon) && !isNaN(date)) {
+            accidentData.push({
+              lat,
+              lon,
+              hour: date.getHours()
+            });
+          }
+        });
+
+        console.log("Total loaded points:", accidentData.length);
+        console.log("First 5 points:", accidentData.slice(0, 5));
+        animate();
+      });
+
+    // 5. Group by hour
+    function groupByHour(data) {
+      const bins = Array.from({ length: 24 }, () => []);
+      data.forEach(d => bins[d.hour].push(d));
+      return bins;
+    }
+
+    const hourText = document.getElementById('hourLabel');
+    document.getElementById('restartBtn').addEventListener('click', () => {
+  hour = 0;
+});
+
+
+    // 6. Animation
+    function animate() {
+      const bins = groupByHour(accidentData);
+      function draw() {
+        resizeCanvas();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const points = bins[hour];
+
+        const intensity = 0.7 + 0.3 * Math.sin(frame / pulseFrames * Math.PI * 2);
+        frame = (frame + 1) % pulseFrames;
+
+        points.forEach(d => {
+          const latlng = new L.LatLng(d.lat, d.lon);
+          const point = map.latLngToContainerPoint(latlng);
+
+          // Gradient dot
+          const gradient = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, 6);
+            gradient.addColorStop(0, `rgba(4, 36, 107, ${0.8 * intensity})`);
+            gradient.addColorStop(1, `rgba(4, 36, 107, 0)`);
+
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
+          ctx.fillStyle = gradient;
+          ctx.fill();
+        });
+
+        if (frame % (pulseFrames * 2) === 0) {
+          hour = (hour + 1) % 24;
+          hourText.textContent = hour === 0 ? "12:00 AM" :
+                                 hour < 12 ? `${hour}:00 AM` :
+                                 hour === 12 ? "12:00 PM" :
+                                 `${hour - 12}:00 PM`;
+        }
+
+        requestAnimationFrame(draw);
+      }
+      draw();
+    }
+  </script>
+</body>
+</html>
